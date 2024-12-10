@@ -1,0 +1,65 @@
+# Desencadenar el pipeline al hacer cambios en la rama main
+trigger:
+- main
+
+# Variables del pipeline
+variables:
+  DB_PASSWORD: $(DB_PASSWORD)
+  DB_USER: $(DB_USER)
+  DB_HOST: $(DB_HOST)
+  DB_NAME: recommended
+
+# Fases del pipeline
+stages:
+- stage: Build
+  displayName: Build and Test
+  jobs:
+  - job: Build
+    displayName: Build and Test Job
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    # Configurar Python
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.x'
+    # Crear entorno virtual y descargar dependencias
+    - script: |
+        python -m venv venv
+        source venv/bin/activate
+        pip install -r requirements.txt
+      displayName: Install Dependencies
+    # Ejecutar pruebas
+    - script: |
+        source venv/bin/activate
+        pytest
+      displayName: Run Tests
+
+- stage: Deploy
+  displayName: Deploy Application
+  dependsOn: Build
+  jobs:
+  # Inicializar la base de datos
+  - job: InitializeDatabase
+    displayName: Initialize PostgreSQL Database
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - script: |
+        PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -U $(DB_USER) -f .azure-pipelines/scripts/init_db.sql
+      displayName: Run SQL Initialization Script
+  # Desplegar la aplicación
+  - job: DeployApp
+    displayName: Deploy Application
+    dependsOn: InitializeDatabase
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    # Construir imagen Docker
+    - script: |
+        docker build -t data-api-fastapi .
+      displayName: Build Docker Image
+    # Ejecutar contenedor Docker
+    - script: |
+        docker run -p 8000:8000 --env-file .env data-api-fastapi
+      displayName: Run Docker Container
